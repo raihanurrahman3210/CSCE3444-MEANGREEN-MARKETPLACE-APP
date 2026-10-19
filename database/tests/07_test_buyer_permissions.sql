@@ -1,41 +1,57 @@
 BEGIN;
 
--- Simulate the test buyer's identity for this transaction.
-SELECT set_config(
+-- Find the buyer and sample listing before switching roles.
+DO $$
+DECLARE
+  buyer_id UUID;
+  sample_listing_id UUID;
+BEGIN
+  SELECT id INTO STRICT buyer_id
+  FROM auth.users
+  WHERE email = 'buyer@example.com';
+
+  SELECT listing.id INTO STRICT sample_listing_id
+  FROM public.listings AS listing
+  JOIN auth.users AS seller
+    ON seller.id = listing.seller_id
+  WHERE seller.email = 'seller@example.com'
+    AND listing.title = 'CSCE 3444 Textbook - Test Listing';
+
+  PERFORM set_config(
     'request.jwt.claims',
     json_build_object(
-        'sub', id::text,
-        'role', 'authenticated'
+      'sub', buyer_id::text,
+      'role', 'authenticated'
     )::text,
     true
-)
-FROM auth.users
-WHERE email = 'buyer@example.com';
+  );
 
--- Use the same database role as a signed-in app user.
+  PERFORM set_config(
+    'test.listing_id',
+    sample_listing_id::text,
+    true
+  );
+END;
+$$;
+
+-- Apply the permissions of a signed-in app user.
 SET LOCAL ROLE authenticated;
 
--- Try to change the seller's listing as the buyer.
 WITH attempted_update AS (
-    UPDATE public.listings
-    SET price = 1.00
-    WHERE id = 'bd18ae53-7716-4125-8486-28c072d099fd'
-    RETURNING id
+  UPDATE public.listings
+  SET price = 1.00
+  WHERE id = current_setting('test.listing_id')::uuid
+  RETURNING id
 )
 SELECT
-    current_user AS database_role,
-    auth.uid() AS simulated_buyer_id,
+  current_user AS database_role,
+  auth.uid() AS simulated_buyer_id,
+  (
+    SELECT count(*)
+    FROM public.listings
+    WHERE id = current_setting('test.listing_id')::uuid
+  ) AS visible_listings,
+  (SELECT count(*) FROM attempted_update) AS rows_changed;
 
-    (
-        SELECT count(*)
-        FROM public.listings
-        WHERE id = 'bd18ae53-7716-4125-8486-28c072d099fd'
-    ) AS visible_listings,
-
-    (
-        SELECT count(*)
-        FROM attempted_update
-    ) AS rows_changed;
-
--- Undo any test changes and restore the previous role.
+-- Discard any test changes.
 ROLLBACK;
