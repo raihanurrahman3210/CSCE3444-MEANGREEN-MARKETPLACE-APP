@@ -1,8 +1,20 @@
 import 'package:flutter/material.dart';
+import 'create_listing_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'search_screen.dart';
 
-void main() {
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: const String.fromEnvironment('SUPABASE_URL'),
+    publishableKey: const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY'),
+  );
+
   runApp(const MeanGreenApp());
 }
+
 
 const Color appGreen = Color(0xFF007A3D);
 
@@ -127,34 +139,79 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  void _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+  
+Future<void> _submit() async {
+  if (!_formKey.currentState!.validate()) {
+    return;
+  }
 
-    setState(() => _loading = true);
+  setState(() {
+    _loading = true;
+  }
+  );
 
-    // Temporary demo login. Replace with real authentication later.
-    await Future.delayed(const Duration(milliseconds: 500));
+  try {
+    final supabase = Supabase.instance.client;
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+
+    if (widget.isSignUp) {
+      final result = await supabase.auth.signUp(
+        email: email,
+        password: password,
+      );
+
+      if (!mounted) return;
+
+      if (result.session == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Account created. Check your email to confirm your account.'),
+          ),
+        );
+        return;
+      }
+    } else {
+      await supabase.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+    }
 
     if (!mounted) return;
 
-    setState(() => _loading = false);
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const HomeScreen(),
+      ),
+      (route) => false,
+    );
+  } on AuthException catch (error) {
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          widget.isSignUp
-              ? 'Demo account form completed.'
-              : 'Demo login completed.',
-        ),
+        content: Text(error.message),
       ),
     );
+  } catch (error) {
+    if (!mounted) return;
 
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-      (route) => false,
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Something went wrong. Please try again.'),
+      ),
     );
+  } finally {
+    if (mounted) {
+      setState(() {
+        _loading = false;
+      });
+    }
   }
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -258,6 +315,7 @@ class MarketplaceListing {
   final String location;
   final String description;
   final IconData icon;
+  final String? imageUrl;
 
   const MarketplaceListing({
     required this.title,
@@ -266,6 +324,7 @@ class MarketplaceListing {
     required this.location,
     required this.description,
     required this.icon,
+    this.imageUrl,
   });
 }
 
@@ -306,8 +365,116 @@ const sampleListings = [
 
 // DEMO MARKETPLACE HOME
 
-class HomeScreen extends StatelessWidget {
+
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+  @override
+  State<HomeScreen> createState() {
+    return _HomeScreenState();
+  }
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  List<MarketplaceListing> listings = [];
+  bool isLoading = true;
+  String errorMessage = '';
+
+  @override
+  void initState() {
+    super.initState();
+    loadListings();
+  }
+
+  Future<void> loadListings() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = '';
+    });
+
+    try {
+      final supabase = Supabase.instance.client;
+
+      if (supabase.auth.currentUser == null) {
+        throw Exception('Please log in to view marketplace listings.');
+      }
+
+      final data = await supabase
+        .from('listings')
+        .select()
+        .eq('status', 'Available')
+        .order('created_at', ascending: false);
+
+      List<MarketplaceListing> loadedListings = [];
+
+      for (final item in data) {
+        String? photoUrl;
+
+        final photos = await supabase
+          .from('listing_images')
+          .select('storage_path')
+          .eq('listing_id', item['id'])
+          .order('display_order')
+          .limit(1);
+
+        if (photos.isNotEmpty) {
+          try {
+            photoUrl = await supabase.storage
+              .from('listing-images')
+              .createSignedUrl(
+                photos.first['storage_path'] as String,
+                3600,
+              );
+          } catch (error) {
+            debugPrint('Could not load listing image: $error');
+          }
+        }
+
+        final isFree = item['is_free'] == true;
+        final price = isFree
+          ? 'Free'
+          : '\$${(item['price'] as num).toStringAsFixed(2)}';
+
+        loadedListings.add(
+          MarketplaceListing(
+            title: item['title'] as String,
+            price: price,
+            condition: item['condition'] as String,
+            location: item['location'] as String,
+            description: item['description'] as String,
+            icon: Icons.shopping_bag_outlined,
+            imageUrl: photoUrl,
+          ),
+        );
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        listings = loadedListings;
+        isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      setState(() {
+        isLoading = false;
+        errorMessage = error.toString();
+      });
+    }
+  }
+
+  Future<void> openCreateListing() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const CreateListingScreen(),
+      ),
+    );
+
+    if (result == true) {
+      loadListings();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -316,17 +483,36 @@ class HomeScreen extends StatelessWidget {
         title: const Text('MeanGreen Marketplace'),
         actions: [
           IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh),
+            onPressed: loadListings,
+          ),
+          IconButton(
+            tooltip: 'Notifications',
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('No new notifications.'),
+                ),
+              );
+            },
+          ),
+          IconButton(
             tooltip: 'Profile',
             icon: const Icon(Icons.person_outline),
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const ProfileScreen(),
-              ),
-            ),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const ProfileScreen(),
+                ),
+              );
+            },
           ),
         ],
       ),
+
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -334,83 +520,203 @@ class HomeScreen extends StatelessWidget {
           children: [
             const Text(
               'Campus Marketplace',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            const Text('Discover items from your campus community.'),
-            const SizedBox(height: 16),
-            Expanded(
-              child: GridView.builder(
-                itemCount: sampleListings.length,
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 0.76,
-                ),
-                itemBuilder: (context, index) {
-                  final listing = sampleListings[index];
-
-                  return Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              ListingDetailsScreen(listing: listing),
-                        ),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Center(
-                                child: Icon(
-                                  listing.icon,
-                                  size: 60,
-                                  color: appGreen,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              listing.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              listing.price,
-                              style: const TextStyle(
-                                color: appGreen,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              listing.condition,
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  );
-                },
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
               ),
+            ),
+
+            const SizedBox(height: 6),
+
+            const Text(
+              'Discover items from your campus community.',
+            ),
+
+            const SizedBox(height: 16),
+
+            Expanded(
+              child: isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(),
+                    )
+                  : errorMessage.isNotEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                errorMessage,
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton(
+                                onPressed: loadListings,
+                                child: const Text('Try Again'),
+                              ),
+                            ],
+                          ),
+                        )
+                      : listings.isEmpty
+                          ? const Center(
+                              child: Text(
+                                'No listings available yet.',
+                              ),
+                            )
+                          : LayoutBuilder(
+                              builder: (context, size) {
+                                int columns = 2;
+
+                                if (size.maxWidth > 900) {
+                                  columns = 4;
+                                } else if (size.maxWidth > 600) {
+                                  columns = 3;
+                                }
+
+                                return GridView.builder(
+                                  itemCount: listings.length,
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: columns,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                    childAspectRatio: 0.76,
+                                  ),
+                                  itemBuilder: (context, index) {
+                                    final listing = listings[index];
+
+                                    return Card(
+                                      clipBehavior: Clip.antiAlias,
+                                      child: InkWell(
+                                        onTap: () {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  ListingDetailsScreen(
+                                                listing: listing,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(12),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: SizedBox(
+                                                  width: double.infinity,
+                                                  child: listing.imageUrl != null
+                                                      ? Image.network(
+                                                          listing.imageUrl!,
+                                                          fit: BoxFit.contain,
+                                                          errorBuilder:
+                                                              (context, error,
+                                                                  stackTrace) {
+                                                            return const Icon(
+                                                              Icons.image_not_supported_outlined,
+                                                              size: 50,
+                                                              color: appGreen,
+                                                            );
+                                                          },
+                                                        )
+                                                      : const Icon(
+                                                          Icons.shopping_bag_outlined,
+                                                          size: 60,
+                                                          color: appGreen,
+                                                        ),
+                                                ),
+                                              ),
+
+                                              const SizedBox(height: 8),
+
+                                              Text(
+                                                listing.title,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+
+                                              const SizedBox(height: 5),
+
+                                              Text(
+                                                listing.price,
+                                                style: const TextStyle(
+                                                  color: appGreen,
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+
+                                              Text(
+                                                listing.condition,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                  color: Colors.grey,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
             ),
           ],
         ),
       ),
+
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: 0,
+        onDestinationSelected: (index) {
+          if (index == 1) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const SearchScreen(),
+            ),
+            );
+          } else if (index == 2) {
+            openCreateListing();
+          } else if (index == 3) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const ProfileScreen(),
+              ),
+            );
+          }
+        },
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search),
+            label: 'Search',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.add_circle_outline),
+            label: 'Sell',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            label: 'Profile',
+          ),
+        ],
+      ),
     );
   }
 }
+
 
 // 3. LISTING DETAILS SCREEN
 
@@ -432,22 +738,39 @@ class ListingDetailsScreen extends StatelessWidget {
               color: appGreen.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: Icon(listing.icon, size: 100, color: appGreen),
+            child: listing.imageUrl != null
+    ?         Image.network(
+                listing.imageUrl!,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return Icon(
+                    listing.icon,
+                    size: 100,
+                    color: appGreen,
+                  );
+                },
+              )
+    : Icon(
+      listing.icon,
+      size: 100,
+      color: appGreen,
+    ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          listing.title,
+          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          listing.price,
+          style: const TextStyle(
+            color: appGreen,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
           ),
-          const SizedBox(height: 20),
-          Text(
-            listing.title,
-            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            listing.price,
-            style: const TextStyle(
-              color: appGreen,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+        ),
+
           const Divider(height: 32),
           _detailRow(Icons.verified_outlined, 'Condition', listing.condition),
           _detailRow(Icons.location_on_outlined, 'Location', listing.location),
