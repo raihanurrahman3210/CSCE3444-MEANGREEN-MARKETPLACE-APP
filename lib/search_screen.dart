@@ -1,7 +1,9 @@
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'main.dart';
+
+import 'app_constants.dart';
+import 'marketplace_listing.dart';
+import 'listing_details_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -52,10 +54,10 @@ class _SearchScreenState extends State<SearchScreen> {
       final searchText = searchController.text.trim().toLowerCase();
 
       final data = await supabase
-        .from('listings')
-        .select()
-        .eq('status', 'Available')
-        .order('created_at', ascending: false);
+          .from('listings')
+          .select()
+          .eq('status', 'Available')
+          .order('created_at', ascending: false);
 
       List<MarketplaceListing> results = [];
 
@@ -64,18 +66,19 @@ class _SearchScreenState extends State<SearchScreen> {
         final description = (item['description'] ?? '').toString();
         final courseCode = (item['course_code'] ?? '').toString();
 
-        final searchableText =
-          '$title $description $courseCode'.toLowerCase();
+        final searchableText = '$title $description $courseCode'.toLowerCase();
 
-        final normalizedCourse =
-            courseCode.toLowerCase().replaceAll(RegExp(r'[\s-]'), '');
-        final normalizedSearch =
-            searchText.replaceAll(RegExp(r'[\s-]'), '');
+        final normalizedCourse = courseCode.toLowerCase().replaceAll(
+          RegExp(r'[\s-]'),
+          '',
+        );
+        final normalizedSearch = searchText.replaceAll(RegExp(r'[\s-]'), '');
 
-        bool matches = searchText.isEmpty ||
+        bool matches =
+            searchText.isEmpty ||
             searchableText.contains(searchText) ||
             (normalizedSearch.isNotEmpty &&
-            normalizedCourse.contains(normalizedSearch));
+                normalizedCourse.contains(normalizedSearch));
 
         if (!matches) {
           continue;
@@ -84,20 +87,17 @@ class _SearchScreenState extends State<SearchScreen> {
         String? imageUrl;
 
         final images = await supabase
-          .from('listing_images')
-          .select('storage_path')
-          .eq('listing_id', item['id'])
-          .order('display_order')
-          .limit(1);
+            .from('listing_images')
+            .select('storage_path')
+            .eq('listing_id', item['id'])
+            .order('display_order')
+            .limit(1);
 
         if (images.isNotEmpty) {
           try {
             imageUrl = await supabase.storage
-              .from('listing-images')
-              .createSignedUrl(
-                images.first['storage_path'] as String,
-                3600,
-                );
+                .from('listing-images')
+                .createSignedUrl(images.first['storage_path'] as String, 3600);
           } catch (error) {
             debugPrint('Image loading failed: $error');
           }
@@ -180,9 +180,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 listing.title,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 5),
               Text(
@@ -209,9 +207,7 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Search Marketplace'),
-      ),
+      appBar: AppBar(title: const Text('Search Marketplace')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -242,55 +238,48 @@ class _SearchScreenState extends State<SearchScreen> {
 
             Expanded(
               child: isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(),
-                    )
+                  ? const Center(child: CircularProgressIndicator())
                   : errorMessage.isNotEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                errorMessage,
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 12),
-                              ElevatedButton(
-                                onPressed: searchListings,
-                                child: const Text('Try Again'),
-                              ),
-                            ],
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(errorMessage, textAlign: TextAlign.center),
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                            onPressed: searchListings,
+                            child: const Text('Try Again'),
                           ),
-                        )
-                      : listings.isEmpty
-                          ? const Center(
-                              child: Text('No matching listings found.'),
-                            )
-                          : LayoutBuilder(
-                              builder: (context, size) {
-                                int columns = 2;
+                        ],
+                      ),
+                    )
+                  : listings.isEmpty
+                  ? const Center(child: Text('No matching listings found.'))
+                  : LayoutBuilder(
+                      builder: (context, size) {
+                        int columns = 2;
 
-                                if (size.maxWidth > 900) {
-                                  columns = 4;
-                                } else if (size.maxWidth > 600) {
-                                  columns = 3;
-                                }
+                        if (size.maxWidth > 900) {
+                          columns = 4;
+                        } else if (size.maxWidth > 600) {
+                          columns = 3;
+                        }
 
-                                return GridView.builder(
-                                  itemCount: listings.length,
-                                  gridDelegate:
-                                      SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: columns,
-                                    crossAxisSpacing: 12,
-                                    mainAxisSpacing: 12,
-                                    childAspectRatio: 0.76,
-                                  ),
-                                  itemBuilder: (context, index) {
-                                    return buildListingCard(listings[index]);
-                                  },
-                                );
-                              },
-                            ),
+                        return GridView.builder(
+                          itemCount: listings.length,
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: columns,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                                childAspectRatio: 0.76,
+                              ),
+                          itemBuilder: (context, index) {
+                            return buildListingCard(listings[index]);
+                          },
+                        );
+                      },
+                    ),
             ),
           ],
         ),
