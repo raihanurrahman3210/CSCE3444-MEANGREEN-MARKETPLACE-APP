@@ -129,6 +129,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
 
   bool _loading = false;
 
@@ -136,6 +137,7 @@ class _AuthScreenState extends State<AuthScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
@@ -159,6 +161,9 @@ Future<void> _submit() async {
       final result = await supabase.auth.signUp(
         email: email,
         password: password,
+        data: {
+          'full_name': _nameController.text.trim(),
+        },
       );
 
       if (!mounted) return;
@@ -238,6 +243,23 @@ Future<void> _submit() async {
                   ),
                 ),
                 const SizedBox(height: 24),
+                if (widget.isSignUp) ...[
+                  TextFormField(
+                    controller: _nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Full Name',
+                      prefixIcon: Icon(Icons.person_outline),
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please enter your full name';
+                   }
+                      return null;
+                    },
+                  ),
+                const SizedBox(height: 16),
+                ],
                 TextFormField(
                   controller: _emailController,
                   decoration: const InputDecoration(
@@ -818,50 +840,271 @@ class ListingDetailsScreen extends StatelessWidget {
 
 // 4. PROFILE AND LOGOUT SCREEN
 
-class ProfileScreen extends StatelessWidget {
+
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() {
+    return _ProfileScreenState();
+  }
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final supabase = Supabase.instance.client;
+  final nameController = TextEditingController();
+
+  String userName = 'Marketplace User';
+  String userEmail = '';
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    loadProfile();
+  }
+
+  Future<void> loadProfile() async {
+    final user = supabase.auth.currentUser;
+
+    if (user == null) {
+      setState(() {
+        userName = 'Guest User';
+        userEmail = 'Not logged in';
+        isLoading = false;
+      });
+      return;
+    }
+
+    String name = (user.userMetadata?['full_name'] ?? '').toString();
+
+    try {
+      final profile = await supabase
+        .from('profiles')
+        .select('display_name')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      final savedName = (profile?['display_name'] ?? '').toString();
+
+      if (savedName.trim().isNotEmpty) {
+        name = savedName;
+      }
+    } catch (error) {
+      debugPrint('Could not load profile: $error');
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      userName = name.trim().isEmpty ? 'Marketplace User' : name;
+      userEmail = user.email ?? '';
+      nameController.text = name.trim();
+      isLoading = false;
+    }
+    );
+  }
+
+  Future<void> saveName() async {
+    final user = supabase.auth.currentUser;
+    final name = nameController.text.trim();
+
+    if (user == null || name.isEmpty) {
+      return;
+    }
+
+    try {
+      await supabase
+        .from('profiles')
+        .update({'display_name': name})
+        .eq('id', user.id);
+ 
+      await supabase.auth.updateUser(
+        UserAttributes(
+          data: {'full_name': name},
+        ),
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        userName = name;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profile updated successfully'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not update profile: $error')),
+      );
+    }
+  }
+
+  Future<void> editName() async {
+    nameController.text = userName == 'Marketplace User' ? '' : userName;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Edit Name'),
+          content: TextField(
+            controller: nameController,
+            decoration: const InputDecoration(
+              labelText: 'Full Name',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(context);
+                saveName();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> logout() async {
+    await supabase.auth.signOut();
+
+    if (!mounted) return;
+
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const WelcomeScreen(),
+      ),
+      (route) => false,
+    );
+  }
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('My Profile')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircleAvatar(
-                radius: 50,
-                backgroundColor: appGreen,
-                child: Icon(Icons.person, size: 55, color: Colors.white),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Marketplace User',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text('Demo account'),
-              const SizedBox(height: 30),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const WelcomeScreen(),
-                    ),
-                    (route) => false,
-                  ),
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Logout'),
-                ),
-              ),
-            ],
-          ),
-        ),
+      appBar: AppBar(
+        title: const Text('My Profile'),
       ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const SizedBox(height: 30),
+
+                  const CircleAvatar(
+                    radius: 50,
+                    backgroundColor: Color(0xFF007A3D),
+                    child: Icon(
+                      Icons.person,
+                      color: Colors.white,
+                      size: 55,
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  Text(
+                    userName,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  Text(
+                    userEmail,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: Colors.grey,
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  const Divider(),
+
+                  ListTile(
+                    leading: const Icon(Icons.person_outline),
+                    title: const Text('Account Information'),
+                    subtitle: Text(userEmail),
+                  ),
+
+                  ListTile(
+                    leading: const Icon(Icons.settings_outlined),
+                    title: const Text('Settings'),
+                    subtitle: const Text('Edit your profile information'),
+                    onTap: editName,
+                    enabled: supabase.auth.currentUser != null,
+                    trailing: const Icon(Icons.chevron_right),
+                  ),
+
+                  ListTile(
+                    leading: const Icon(Icons.contact_support_outlined),
+                    title: const Text('Contact Us'),
+                    subtitle: const Text('Questions or need help?'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) {
+                          return AlertDialog(
+                            title: const Text('Contact Us'),
+                            content: const Text(
+                              'Have a question, experiencing an issue, or need assistance with MeanGreen Marketplace?\n\n'
+                              'Please contact us at abir3210rh@icloud.com for any questions, concerns, or technical problems. '
+                              'We will do our best to assist you.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                },
+                                child: const Text('Close'),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  ),
+
+                const SizedBox(height: 30),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: logout,
+                      icon: const Icon(Icons.logout),
+                      label: const Text('Logout'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
+
