@@ -1,8 +1,19 @@
 import 'package:flutter/material.dart';
+import 'create_listing_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() {
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: const String.fromEnvironment('SUPABASE_URL'),
+    anonKey: const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY'),
+  );
+
   runApp(const MeanGreenApp());
 }
+
 
 const Color appGreen = Color(0xFF007A3D);
 
@@ -316,6 +327,17 @@ class HomeScreen extends StatelessWidget {
         title: const Text('MeanGreen Marketplace'),
         actions: [
           IconButton(
+            tooltip: 'Notifications',
+            icon: const Icon(Icons.notifications_outlined),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+              content: Text('No new notifications.'),
+              ),
+              );
+            },
+          ),
+          IconButton(
             tooltip: 'Profile',
             icon: const Icon(Icons.person_outline),
             onPressed: () => Navigator.push(
@@ -408,6 +430,50 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ),
+  
+  bottomNavigationBar: NavigationBar(
+    selectedIndex: 0,
+    onDestinationSelected: (index) {
+      if (index == 1) {
+        ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Search screen coming soon')),
+        );
+      } else if (index == 2) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const CreateListingScreen(),
+           ),
+      );
+      } else if (index == 3) {
+          Navigator.push(
+          context,
+          MaterialPageRoute(
+          builder: (_) => const ProfileScreen(),
+          ),
+          );
+        }
+      },
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.home_outlined),
+          label: 'Home',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.search),
+          label: 'Search',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.add_circle_outline),
+          label: 'Sell',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.person_outline),
+          label: 'Profile',
+        ),
+      ],
+  ),
+  
     );
   }
 }
