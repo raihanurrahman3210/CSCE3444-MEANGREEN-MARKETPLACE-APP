@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: 'https://qqzgldmytzkssmryhlnb.supabase.co',
+    publishableKey: 'sb_publishable_UrAymZKRs-7eUT2-HAE7ow_cLM9NTut',
+  );
+
   runApp(const MeanGreenApp());
 }
 
@@ -87,9 +95,7 @@ class WelcomeScreen extends StatelessWidget {
               TextButton(
                 onPressed: () => Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const HomeScreen(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
                 ),
                 child: const Text('Explore Demo Marketplace'),
               ),
@@ -127,41 +133,64 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
-  void _submit() async {
+  Future<void> _submit() async {
+    if (_loading) return;
+
+    // We will connect sign-up in a later step.
+    if (widget.isSignUp) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sign-up is not available yet. Please use Login.'),
+        ),
+      );
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
 
-    // Temporary demo login. Replace with real authentication later.
-    await Future.delayed(const Duration(milliseconds: 500));
+    try {
+      final response = await Supabase.instance.client.auth.signInWithPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
 
-    if (!mounted) return;
+      if (response.session == null) {
+        throw Exception('No login session returned.');
+      }
 
-    setState(() => _loading = false);
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          widget.isSignUp
-              ? 'Demo account form completed.'
-              : 'Demo login completed.',
-        ),
-      ),
-    );
+      _passwordController.clear();
 
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-      (route) => false,
-    );
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+    } on AuthException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error.message)));
+    } catch (_) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to log in. Please try again.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.isSignUp ? 'Create Account' : 'Login'),
-      ),
+      appBar: AppBar(title: Text(widget.isSignUp ? 'Create Account' : 'Login')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -221,8 +250,8 @@ class _AuthScreenState extends State<AuthScreen> {
                       _loading
                           ? 'Please wait...'
                           : widget.isSignUp
-                              ? 'Create Account'
-                              : 'Login',
+                          ? 'Create Account'
+                          : 'Login',
                     ),
                   ),
                 ),
@@ -230,8 +259,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   onPressed: () => Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(
-                      builder: (_) =>
-                          AuthScreen(isSignUp: !widget.isSignUp),
+                      builder: (_) => AuthScreen(isSignUp: !widget.isSignUp),
                     ),
                   ),
                   child: Text(
@@ -306,8 +334,25 @@ const sampleListings = [
 
 // DEMO MARKETPLACE HOME
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late final Future<List<Map<String, dynamic>>> _listingsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _listingsFuture = Supabase.instance.client
+        .from('listings')
+        .select('id, title, price, is_free, condition, location, description')
+        .order('created_at', ascending: false);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -320,9 +365,7 @@ class HomeScreen extends StatelessWidget {
             icon: const Icon(Icons.person_outline),
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                builder: (_) => const ProfileScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const ProfileScreen()),
             ),
           ),
         ],
@@ -340,67 +383,104 @@ class HomeScreen extends StatelessWidget {
             const Text('Discover items from your campus community.'),
             const SizedBox(height: 16),
             Expanded(
-              child: GridView.builder(
-                itemCount: sampleListings.length,
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 0.76,
-                ),
-                itemBuilder: (context, index) {
-                  final listing = sampleListings[index];
+              child: FutureBuilder<List<Map<String, dynamic>>>(
+                future: _listingsFuture,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
 
-                  return Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              ListingDetailsScreen(listing: listing),
-                        ),
+                  if (snapshot.hasError) {
+                    return const Center(
+                      child: Text(
+                        'Unable to load listings. Please log in and try again.',
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Center(
-                                child: Icon(
-                                  listing.icon,
-                                  size: 60,
-                                  color: appGreen,
+                    );
+                  }
+
+                  final rows = snapshot.data ?? [];
+
+                  if (rows.isEmpty) {
+                    return const Center(
+                      child: Text('No listings available yet.'),
+                    );
+                  }
+
+                  return GridView.builder(
+                    itemCount: rows.length,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.76,
+                        ),
+                    itemBuilder: (context, index) {
+                      final row = rows[index];
+                      final price = (row['price'] as num).toDouble();
+
+                      final listing = MarketplaceListing(
+                        title: row['title'] as String,
+                        price: row['is_free'] == true
+                            ? 'Free'
+                            : '\$${price.toStringAsFixed(2)}',
+                        condition: row['condition'] as String,
+                        location: row['location'] as String,
+                        description: row['description'] as String,
+                        icon: Icons.shopping_bag_outlined,
+                      );
+
+                      return Card(
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  ListingDetailsScreen(listing: listing),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Center(
+                                    child: Icon(
+                                      listing.icon,
+                                      size: 60,
+                                      color: appGreen,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                Text(
+                                  listing.title,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  listing.price,
+                                  style: const TextStyle(
+                                    color: appGreen,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  listing.condition,
+                                  style: const TextStyle(color: Colors.grey),
+                                ),
+                              ],
                             ),
-                            Text(
-                              listing.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 5),
-                            Text(
-                              listing.price,
-                              style: const TextStyle(
-                                color: appGreen,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              listing.condition,
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   );
                 },
               ),
@@ -524,13 +604,29 @@ class ProfileScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () => Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const WelcomeScreen(),
-                    ),
-                    (route) => false,
-                  ),
+                  onPressed: () async {
+                    try {
+                      await Supabase.instance.client.auth.signOut();
+
+                      if (!context.mounted) return;
+
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const WelcomeScreen(),
+                        ),
+                        (route) => false,
+                      );
+                    } catch (_) {
+                      if (!context.mounted) return;
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Unable to log out. Please try again.'),
+                        ),
+                      );
+                    }
+                  },
                   icon: const Icon(Icons.logout),
                   label: const Text('Logout'),
                 ),
