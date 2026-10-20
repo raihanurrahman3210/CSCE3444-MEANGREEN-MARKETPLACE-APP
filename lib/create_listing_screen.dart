@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CreateListingScreen extends StatefulWidget {
   const CreateListingScreen({super.key});
@@ -27,36 +28,154 @@ class _CreateListingScreenState extends State<CreateListingScreen> {
 
   Uint8List? selectedPhoto;
   final ImagePicker imagePicker = ImagePicker();
+  XFile? selectedFile;
   
-  
-Future<void> choosePhoto() async {
-  final XFile? photo = await imagePicker.pickImage(
+  Future<void> choosePhoto() async {
+  final photo = await imagePicker.pickImage(
     source: ImageSource.gallery,
     imageQuality: 80,
   );
 
-  if (photo != null) {
-    final imageData = await photo.readAsBytes();
+  if (photo == null) return;
+
+  final imageData = await photo.readAsBytes();
+  final fileName = photo.name.toLowerCase();
+
+  if (!fileName.endsWith('.jpg') &&
+      !fileName.endsWith('.jpeg') &&
+      !fileName.endsWith('.png') &&
+      !fileName.endsWith('.webp')) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select a JPG, PNG, or WebP image')),
+    );
+    return;
+  }
+
+  if (imageData.length > 5 * 1024 * 1024) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Photo must be smaller than 5 MB')),
+    );
+    return;
+  }
+
+  if (!mounted) return;
+
+  setState(() {
+    selectedPhoto = imageData;
+    selectedFile = photo;
+  });
+}
+
+
+
+Future<void> createListing() async {
+  if (!formKey.currentState!.validate()) return;
+
+  final supabase = Supabase.instance.client;
+  final user = supabase.auth.currentUser;
+
+  if (user == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+       content: Text('Please log in before creating a listing'),
+      ),
+    );
+    return;
+  }
+
+  try {
+    final category = await supabase
+      .from('categories')
+      .select('id')
+      .eq('name', selectedCategory)
+      .single();
+
+    final price = isFree
+      ? 0.0
+      : double.parse(priceController.text.trim());
+
+    final listing = await supabase
+      .from('listings')
+      .insert({
+        'seller_id': user.id,
+        'category_id': category['id'],
+        'title': titleController.text.trim(),
+        'description': descriptionController.text.trim(),
+        'price': price,
+        'is_free': isFree,
+        'condition': selectedCondition,
+        'course_code': courseController.text.trim().isEmpty
+            ? null
+            : courseController.text.trim(),
+        'location': locationController.text.trim(),
+      })
+      .select('id')
+      .single();
+
+    final listingId = listing['id'] as String;
+
+    if (selectedPhoto != null && selectedFile != null) {
+      final fileName = selectedFile!.name.toLowerCase();
+      final extension = fileName.split('.').last;
+
+      final contentType = extension == 'png'
+        ? 'image/png'
+        : extension == 'webp'
+            ? 'image/webp'
+            : 'image/jpeg';
+
+      final path =
+        '${user.id}/$listingId/${DateTime.now().millisecondsSinceEpoch}.$extension';
+
+      await supabase.storage.from('listing-images').uploadBinary(
+        path,
+        selectedPhoto!,
+        fileOptions: FileOptions(contentType: contentType),
+      );
+
+      await supabase.from('listing_images').insert({
+        'listing_id': listingId,
+        'storage_path': path,
+        'display_order': 0,
+      });
+    }
 
     if (!mounted) return;
 
-    setState(() {
-      selectedPhoto = imageData;
-    }
-    );
-  }
-}
-
-
-void createListing() {
-  if (formKey.currentState!.validate()) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Listing form completed'),
+        content: Text('Listing created successfully!'),
       ),
+    );
+
+    Navigator.pop(context, true);
+  } on PostgrestException catch (error) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Database error: ${error.message}')),
+    );
+  } on StorageException catch (error) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Listing saved, but photo upload failed: ${error.message}',
+        ),
+      ),
+    );
+  } catch (error) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error: $error')),
     );
   }
 }
+
 
 @override
 void dispose() {
